@@ -24,6 +24,10 @@ wandb/
 *.pth
 *.ckpt
 
+# Raw MRI subject data (large, PHI-bearing DICOM — never commit)
+CN_MRI_raw_486subjects/
+CN_MRI_raw_486subjects_20260908.zip
+
 # OS / editor
 .DS_Store
 Thumbs.db

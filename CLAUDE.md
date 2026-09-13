@@ -46,8 +46,8 @@ rewrite.
 
 ### Reference papers
 
-Referenced in this project's research (not committed to this repo — see
-note below):
+Referenced in this project's research, and committed to this repo under
+`paper/` (see note below):
 
 1. **Fast Unsupervised Brain Anomaly Detection and Segmentation with
    Diffusion Models** (Pinaya/Graham et al., MICCAI 2022) — the baseline LDM
@@ -69,11 +69,9 @@ note below):
 
 ## Setup notes / things not obvious from the code
 
-- The three reference PDFs (see above) live locally in a `paper/` folder on
-  the original machine but are **intentionally not committed** to this repo
-  — copyrighted published papers, kept out of git even though the repo is
-  private. If you need them on a new machine, transfer them out-of-band
-  (zip/cloud/USB), not via this repo.
+- The three reference PDFs (see above) live in the `paper/` folder and are
+  **intentionally committed** to this repo — copyrighted published papers,
+  deliberately checked into git since the repo is private.
 - `data/`, `checkpoints/`, `runs/`, `outputs/`, `logs/`, model weight files
   (`*.pt`, `*.pth`, `*.ckpt`) are gitignored — machine-specific / too large
   for git. Re-point them per machine.
