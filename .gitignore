@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.ipynb_checkpoints/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Data / model artifacts (usually too large / machine-specific for git)
+data/
+datasets/
+*.nii
+*.nii.gz
+checkpoints/
+runs/
+outputs/
+logs/
+wandb/
+*.pt
+*.pth
+*.ckpt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude local settings (machine-specific)
+.claude/settings.local.json
