@@ -16,9 +16,3 @@ scikit-image
 x-transformers==1.8.1
 numba
 medmnist
-
-# Raw MRI preprocessing (preprocess_mri.py): DICOM->NIfTI, N4, skull-strip, registration
-SimpleITK
-pydicom
-antspyx
-HD-BET

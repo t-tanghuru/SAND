@@ -4,9 +4,11 @@
 Pipeline per subject/image:
   1. DICOM series -> 3D NIfTI volume (SimpleITK).
   2. N4 bias field correction.
-  3. Skull-stripping (HD-BET; falls back to an Otsu + largest-component mask
-     if HD-BET/torch is not installed, with a loud warning -- the fallback is
-     for quick smoke-testing only, not for producing training data).
+  3. Skull-stripping with SynthStrip (Hoopes et al. 2022, NeuroImage), run via
+     FreeSurfer's official `mri_synthstrip` script vendored verbatim under
+     `third_party/` with the official `synthstrip.1.pt` weights (SHA256
+     verified). `--skull_strip_method otsu` is a low-quality smoke-test
+     fallback only -- never use it to produce training data.
   4. Rigid+affine registration to the MNI152 1mm brain template (ANTsPy).
   5. Resample to isotropic 1mm spacing.
   6. Robust intensity clipping (0.5-99.5 percentile inside the brain mask).
@@ -26,8 +28,11 @@ separate lesion dataset (e.g. BRATS/WMH) and is out of scope here.
 """
 import argparse
 import csv
+import hashlib
+import subprocess
 import sys
 import tempfile
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -41,12 +46,10 @@ try:
 except ImportError:
     HAS_ANTS = False
 
-try:
-    from HD_BET.run import run_hd_bet
-
-    HAS_HDBET = True
-except ImportError:
-    HAS_HDBET = False
+SYNTHSTRIP_SCRIPT = Path(__file__).resolve().parent / "third_party" / "mri_synthstrip.py"
+SYNTHSTRIP_MODEL_URL = "https://ftp.nmr.mgh.harvard.edu/pub/dist/freesurfer/synthstrip/models/synthstrip.1.pt"
+# SHA256 recorded by the official freesurfer/freesurfer repo's git-annex key for synthstrip.1.pt.
+SYNTHSTRIP_MODEL_SHA256 = "37417f802196186441aae3e7f385d94f8a98c64a88acaeaa2723af995c653e33"
 
 
 def parse_args():
@@ -54,7 +57,8 @@ def parse_args():
     parser.add_argument("--dicom_root", required=True, help="Path to CN_MRI_raw_486subjects/")
     parser.add_argument("--output_dir", required=True, help="Where to write nifti/, slices/, and the split CSVs.")
     parser.add_argument("--mni_template", default=None, help="Path to an MNI152 T1 1mm brain-extracted template .nii.gz. If omitted, registration is skipped.")
-    parser.add_argument("--skull_strip_method", choices=["hdbet", "otsu"], default="hdbet")
+    parser.add_argument("--skull_strip_method", choices=["synthstrip", "otsu"], default="synthstrip")
+    parser.add_argument("--synthstrip_model", default=str(Path.home() / ".cache" / "synthstrip" / "synthstrip.1.pt"), help="Official SynthStrip weights; downloaded from MGH and SHA256-verified if missing.")
     parser.add_argument("--isotropic_spacing", type=float, default=1.0)
     parser.add_argument("--clip_low_pct", type=float, default=0.5)
     parser.add_argument("--clip_high_pct", type=float, default=99.5)
@@ -63,7 +67,7 @@ def parse_args():
     parser.add_argument("--test_frac", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=2)
     parser.add_argument("--first_n", type=int, default=None, help="Only process the first N subjects (for a smoke test).")
-    parser.add_argument("--gpu", action="store_true", help="Run HD-BET on GPU (device 0).")
+    parser.add_argument("--gpu", action="store_true", help="Run SynthStrip on GPU.")
     return parser.parse_args()
 
 
@@ -86,7 +90,7 @@ def n4_bias_correct(image: sitk.Image) -> sitk.Image:
 
 def skull_strip_otsu(image: sitk.Image) -> sitk.Image:
     """Fallback brain mask: Otsu threshold + largest connected component +
-    morphological closing. Much less accurate than HD-BET -- smoke-test only."""
+    morphological closing. Much less accurate than SynthStrip -- smoke-test only."""
     mask = sitk.OtsuThreshold(image, 0, 1, 200)
     mask = sitk.BinaryMorphologicalClosing(mask, [3, 3, 3])
     cc = sitk.ConnectedComponent(mask)
@@ -96,18 +100,30 @@ def skull_strip_otsu(image: sitk.Image) -> sitk.Image:
     return sitk.Cast(mask, sitk.sitkUInt8)
 
 
-def skull_strip_hdbet(nifti_path: Path, out_dir: Path, use_gpu: bool) -> Path:
+def ensure_synthstrip_model(model_path: Path) -> Path:
+    if not model_path.exists():
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = model_path.with_suffix(".part")
+        urllib.request.urlretrieve(SYNTHSTRIP_MODEL_URL, tmp)
+        tmp.replace(model_path)
+    digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    if digest != SYNTHSTRIP_MODEL_SHA256:
+        raise RuntimeError(f"{model_path} SHA256 {digest} does not match the official SynthStrip weights.")
+    return model_path
+
+
+def skull_strip_synthstrip(nifti_path: Path, out_dir: Path, model_path: Path, use_gpu: bool):
     out_dir.mkdir(parents=True, exist_ok=True)
-    brain_path = out_dir / nifti_path.name.replace(".nii.gz", "_brain.nii.gz")
-    run_hd_bet(
-        [str(nifti_path)],
-        [str(brain_path)],
-        mode="accurate",
-        device=0 if use_gpu else "cpu",
-        postprocess=True,
-        do_tta=use_gpu,
-    )
-    return brain_path
+    stem = nifti_path.name.replace(".nii.gz", "")
+    brain_path = out_dir / f"{stem}_brain.nii.gz"
+    mask_path = out_dir / f"{stem}_mask.nii.gz"
+    cmd = [sys.executable, str(SYNTHSTRIP_SCRIPT), "-i", str(nifti_path), "-o", str(brain_path), "-m", str(mask_path), "--model", str(model_path)]
+    if use_gpu:
+        cmd.append("-g")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"mri_synthstrip failed: {(result.stderr or result.stdout)[-2000:]}")
+    return brain_path, mask_path
 
 
 def register_to_template(brain_image: sitk.Image, template_path: str) -> sitk.Image:
@@ -179,12 +195,10 @@ def process_subject(row, args, nifti_dir: Path, slices_dir: Path):
     volume_path = nifti_dir / f"{tag}.nii.gz"
     sitk.WriteImage(volume, str(volume_path))
 
-    if args.skull_strip_method == "hdbet":
-        if not HAS_HDBET:
-            raise RuntimeError("HD-BET is not installed (`pip install HD-BET`) -- or pass --skull_strip_method otsu for a lower-quality fallback.")
-        brain_path = skull_strip_hdbet(volume_path, nifti_dir / "hdbet", use_gpu=args.gpu)
+    if args.skull_strip_method == "synthstrip":
+        brain_path, mask_path = skull_strip_synthstrip(volume_path, nifti_dir / "synthstrip", Path(args.synthstrip_model), use_gpu=args.gpu)
         brain = sitk.ReadImage(str(brain_path))
-        mask = sitk.Cast(brain != 0, sitk.sitkUInt8)
+        mask = sitk.Cast(sitk.ReadImage(str(mask_path)) > 0, sitk.sitkUInt8)
     else:
         mask = skull_strip_otsu(volume)
         brain = sitk.Mask(volume, mask)
@@ -216,6 +230,8 @@ def write_manifest(paths, out_path: Path):
 
 def main():
     args = parse_args()
+    if args.skull_strip_method == "synthstrip":
+        ensure_synthstrip_model(Path(args.synthstrip_model))
     participants = pd.read_csv(Path(args.dicom_root) / "participants.csv")
     if args.first_n:
         participants = participants.iloc[: args.first_n]

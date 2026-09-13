@@ -1,0 +1,17 @@
+# Separate environment for preprocess_mri.py (Python 3.10) -- do not install
+# alongside requirements.txt, which pins torch==1.13.1 for the training stack.
+#
+# SynthStrip deps mirror FreeSurfer's official container
+# (freesurfer/freesurfer: mri_synthstrip/Dockerfile.gpu @ cf4bccf):
+#   python 3.10, torch==2.1.2 (cu118 wheels), surfa @ ca4e263.
+# Install torch with: --index-url https://download.pytorch.org/whl/cu118
+torch==2.1.2
+surfa @ https://github.com/freesurfer/surfa/archive/ca4e26317d3556776268ede7de20752743bf49a2.zip
+# torch 2.1.2 wheels are built against NumPy 1.x
+numpy<2
+
+# Our pipeline around SynthStrip
+pandas
+SimpleITK
+pydicom
+antspyx

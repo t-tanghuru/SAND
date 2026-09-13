@@ -65,17 +65,28 @@ Referenced in this project's research, and committed to this repo under
 - `preprocess_mri.py` — turns raw ADNI DICOM (e.g. `CN_MRI_raw_486subjects/`)
   into the 2D axial NIfTI slices + `train/val/test_normal.csv` manifests that
   `src/data/get_train_and_val_dataloader.py` expects. Pipeline: DICOM→NIfTI →
-  N4 bias correction → skull-strip (HD-BET, or `--skull_strip_method otsu` as
-  a lower-quality fallback when HD-BET/torch isn't installed) → optional
-  affine registration to an MNI template (`--mni_template`, needs antspyx) →
+  N4 bias correction → skull-strip (SynthStrip) → optional affine
+  registration to an MNI template (`--mni_template`, needs antspyx) →
   isotropic resample → percentile intensity clipping → per-slice NIfTI
   export. Only produces the *normal* splits — anomalous test data needs a
   separate lesion dataset (BRATS/WMH/etc.), not covered by this script.
+  `--skull_strip_method otsu` exists only as a smoke-test fallback; never
+  use it to generate training data.
+- `third_party/mri_synthstrip.py` — FreeSurfer's official SynthStrip script,
+  vendored verbatim (source commit in its header). Weights are fetched from
+  MGH into `~/.cache/synthstrip/` and SHA256-checked against the official
+  repo's git-annex key.
 - `src/` — trainers, networks, losses, data loading (`src/data/`), simplex
   noise utility.
 - `configs/train_gaussian.sh`, `configs/train_simplex.sh` — the two
   comparison runs (baseline vs proposed).
-- `requirements.txt` — Python deps.
+- `requirements.txt` — training deps (pins `torch==1.13.1` to match
+  `ddpm-ood`). `requirements-preprocess.txt` — preprocessing deps, installed
+  in a **separate** environment (on the original machine: conda env
+  `sand-preprocess`), because SynthStrip's stack needs a modern torch.
+  Always install into / run that env with `PYTHONNOUSERSITE=1` — otherwise
+  the conda Python also sees `~/.local` site-packages, and pip will
+  uninstall packages the training environment depends on.
 
 ## Setup notes / things not obvious from the code
 
@@ -87,3 +98,10 @@ Referenced in this project's research, and committed to this repo under
   for git. Re-point them per machine.
 - No CI/tests yet; verify changes by running the relevant `configs/*.sh`
   script end-to-end on a small subset first.
+- Skull-stripping tool choice: none of the three reference papers used the
+  same tool (Pinaya: UK Biobank's pre-processed data; AnoDDPM: pre-stripped
+  NFBS + BrainSuite bias correction; normative modelling: FreeSurfer 6.0).
+  SynthStrip was chosen because it is peer-reviewed, accurate, and part of
+  the FreeSurfer ecosystem — the planned future extension to dementia will
+  need FreeSurfer volumetrics. HD-BET was tried first but dropped (its
+  Zenodo-hosted weights were unreachable, and it isn't on the FreeSurfer path).
