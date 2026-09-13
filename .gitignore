@@ -11,8 +11,9 @@ venv/
 env/
 
 # Data / model artifacts (usually too large / machine-specific for git)
-data/
-datasets/
+# (leading slash: only the repo-root data/ dir, not src/data/ etc.)
+/data/
+/datasets/
 *.nii
 *.nii.gz
 checkpoints/

@@ -62,7 +62,17 @@ Referenced in this project's research, and committed to this repo under
 
 - `train_vqvae.py`, `train_ddpm.py` — training entry points.
 - `reconstruct.py`, `ood_detection.py` — inference / anomaly scoring.
-- `src/` — trainers, networks, losses, data loading, simplex noise utility.
+- `preprocess_mri.py` — turns raw ADNI DICOM (e.g. `CN_MRI_raw_486subjects/`)
+  into the 2D axial NIfTI slices + `train/val/test_normal.csv` manifests that
+  `src/data/get_train_and_val_dataloader.py` expects. Pipeline: DICOM→NIfTI →
+  N4 bias correction → skull-strip (HD-BET, or `--skull_strip_method otsu` as
+  a lower-quality fallback when HD-BET/torch isn't installed) → optional
+  affine registration to an MNI template (`--mni_template`, needs antspyx) →
+  isotropic resample → percentile intensity clipping → per-slice NIfTI
+  export. Only produces the *normal* splits — anomalous test data needs a
+  separate lesion dataset (BRATS/WMH/etc.), not covered by this script.
+- `src/` — trainers, networks, losses, data loading (`src/data/`), simplex
+  noise utility.
 - `configs/train_gaussian.sh`, `configs/train_simplex.sh` — the two
   comparison runs (baseline vs proposed).
 - `requirements.txt` — Python deps.
