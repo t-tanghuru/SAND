@@ -78,7 +78,11 @@ def dicom_series_to_nifti(dicom_dir: Path) -> sitk.Image:
         raise RuntimeError(f"No DICOM series found in {dicom_dir}")
     files = reader.GetGDCMSeriesFileNames(str(dicom_dir), series_ids[0])
     reader.SetFileNames(files)
-    return reader.Execute()
+    image = reader.Execute()
+    # Enhanced (multi-frame) MR DICOM stores the whole volume in one file and is read as 4D with a trailing size-1 axis.
+    if image.GetDimension() == 4 and image.GetSize()[3] == 1:
+        image = image[:, :, :, 0]
+    return image
 
 
 def n4_bias_correct(image: sitk.Image) -> sitk.Image:
@@ -126,18 +130,28 @@ def skull_strip_synthstrip(nifti_path: Path, out_dir: Path, model_path: Path, us
     return brain_path, mask_path
 
 
-def register_to_template(brain_image: sitk.Image, template_path: str) -> sitk.Image:
+def register_to_template(brain_image: sitk.Image, mask: sitk.Image, template_path: str):
+    """Affine-register the brain to the template and carry the brain mask along with the same transform."""
     if not HAS_ANTS:
         raise RuntimeError("antspyx is not installed (`pip install antspyx`) -- required for --mni_template registration.")
     with tempfile.TemporaryDirectory() as tmp_dir:
-        moving_path = Path(tmp_dir) / "moving.nii.gz"
-        result_path = Path(tmp_dir) / "result.nii.gz"
-        sitk.WriteImage(brain_image, str(moving_path))
-        moving = ants.image_read(str(moving_path))
+        tmp = Path(tmp_dir)
+        sitk.WriteImage(brain_image, str(tmp / "moving.nii.gz"))
+        sitk.WriteImage(mask, str(tmp / "mask.nii.gz"))
         fixed = ants.image_read(template_path)
-        result = ants.registration(fixed=fixed, moving=moving, type_of_transform="Affine")
-        ants.image_write(result["warpedmovout"], str(result_path))
-        return sitk.ReadImage(str(result_path))
+        result = ants.registration(fixed=fixed, moving=ants.image_read(str(tmp / "moving.nii.gz")), type_of_transform="Affine")
+        warped_mask = ants.apply_transforms(
+            fixed=fixed,
+            moving=ants.image_read(str(tmp / "mask.nii.gz")),
+            transformlist=result["fwdtransforms"],
+            interpolator="nearestNeighbor",
+        )
+        ants.image_write(result["warpedmovout"], str(tmp / "brain_reg.nii.gz"))
+        ants.image_write(warped_mask, str(tmp / "mask_reg.nii.gz"))
+        brain_reg = sitk.ReadImage(str(tmp / "brain_reg.nii.gz"))
+        mask_reg = sitk.Cast(sitk.ReadImage(str(tmp / "mask_reg.nii.gz")) > 0, sitk.sitkUInt8)
+        mask_reg.CopyInformation(brain_reg)
+        return brain_reg, mask_reg
 
 
 def resample_isotropic(image: sitk.Image, spacing: float, is_mask: bool = False) -> sitk.Image:
@@ -199,13 +213,17 @@ def process_subject(row, args, nifti_dir: Path, slices_dir: Path):
         brain_path, mask_path = skull_strip_synthstrip(volume_path, nifti_dir / "synthstrip", Path(args.synthstrip_model), use_gpu=args.gpu)
         brain = sitk.ReadImage(str(brain_path))
         mask = sitk.Cast(sitk.ReadImage(str(mask_path)) > 0, sitk.sitkUInt8)
+        mask.CopyInformation(brain)
     else:
         mask = skull_strip_otsu(volume)
-        brain = sitk.Mask(volume, mask)
+        brain = volume
+
+    # SynthStrip fills background with min(image, 0), which can be a tiny negative from N4 -- zero it explicitly.
+    brain = sitk.Mask(brain, mask)
 
     if args.mni_template:
-        brain = register_to_template(brain, args.mni_template)
-        mask = sitk.Cast(brain != 0, sitk.sitkUInt8)
+        brain, mask = register_to_template(brain, mask, args.mni_template)
+        brain = sitk.Mask(brain, mask)
 
     brain = resample_isotropic(brain, args.isotropic_spacing, is_mask=False)
     mask = resample_isotropic(mask, args.isotropic_spacing, is_mask=True)
