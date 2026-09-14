@@ -1,6 +1,8 @@
 lpips==0.1.4
 matplotlib
 torch==1.13.1
+# torch 1.13.1 wheels are built against NumPy 1.x
+numpy<2
 monai[nibabel]==1.2.0
 monai-generative
 pandas

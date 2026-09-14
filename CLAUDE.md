@@ -99,9 +99,11 @@ Referenced in this project's research, and committed to this repo under
 - No CI/tests yet; verify changes by running the relevant `configs/*.sh`
   script end-to-end on a small subset first.
 - Skull-stripping tool choice: none of the three reference papers used the
-  same tool (Pinaya: UK Biobank's pre-processed data; AnoDDPM: pre-stripped
-  NFBS + BrainSuite bias correction; normative modelling: FreeSurfer 6.0).
-  SynthStrip was chosen because it is peer-reviewed, accurate, and part of
-  the FreeSurfer ecosystem — the planned future extension to dementia will
-  need FreeSurfer volumetrics. HD-BET was tried first but dropped (its
+  same tool (Pinaya: UK Biobank's pre-processed data; AnoDDPM: deliberately
+  used NFBS *full-skull* images with no skull-stripping or registration, and
+  BrainSuite bias correction only on its tumour test set; normative
+  modelling: FreeSurfer 6.0).
+  SynthStrip was chosen because it is peer-reviewed, accurate, the official
+  FreeSurfer tool, and its weights were obtainable (a possible, optional
+  extension to dementia would also stay on the FreeSurfer path). HD-BET was tried first but dropped (its
   Zenodo-hosted weights were unreachable, and it isn't on the FreeSurfer path).
