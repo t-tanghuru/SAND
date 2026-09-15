@@ -27,13 +27,18 @@ Reproduce first, then change one thing at a time.
    mask + partial healing) in this repo (`ddpm-ood`), again Gaussian vs
    Simplex.
 
-The AnoDDPM reproduction lives outside this repo: a clone of
-`Julian-Wyatt/AnoDDPM` at `~/LimLab/AnoDDPM`, branch `sand-adni` (ADNI
-hippocampus data loader, `test_args/args101.json` = Gaussian /
+The AnoDDPM reproduction code is in `anoddpm/`: the first commit touching it
+imports `Julian-Wyatt/AnoDDPM` at upstream commit 3052f04 unmodified (MIT
+license, `anoddpm/LICENSE.txt`), and the later commits are the SAND changes, so
+`git diff <import commit> -- anoddpm/` shows everything changed from upstream:
+ADNI hippocampus loader, resume fix, `test_args/args101.json` = Gaussian /
 `args102.json` = Simplex (CN486 runs), `args201.json` = Simplex 3T 500k,
 `sand_eval_ad.py` CN-vs-AD evaluation, `sand_analyze.py` AUROC with bootstrap
 CIs and age/sex matching, `sand_plot_curves.py` λ and checkpoint curves,
-`sand_ckpt_val_watcher.sh` the automated validation/test pipeline). Run it in its own conda env
+`sand_ckpt_val_watcher.sh` the automated validation/test pipeline. The
+2026-09-15 runs execute from the standalone clone `~/LimLab/AnoDDPM` (its
+`model/`, `logs/`, `sand_eval/`, and `cd` paths); move work to `anoddpm/` once
+they finish. Run it in its own conda env
 (torch 1.13.1, numba, ffmpeg) with `PYTHONNOUSERSITE=1`.
 
 ### Key finding
