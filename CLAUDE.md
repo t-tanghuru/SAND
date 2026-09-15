@@ -5,26 +5,31 @@ checkout, so a new session doesn't have to rediscover it from scratch.
 
 ## Research goal
 
-Replace Gaussian noise with **Simplex noise** in a Latent Diffusion Model
-(LDM) for **unsupervised** brain MRI anomaly detection, and demonstrate a
-performance/speed advantage.
+Compare **Simplex vs Gaussian noise** in diffusion-model **unsupervised**
+brain MRI anomaly detection. Trained on cognitively normal (CN) T1 scans only;
+tested on **Alzheimer's disease (AD)** to see whether the approach applies to
+AD.
 
-### Approach (normative modeling)
+### Current plan (lab meeting 2026-09-14)
 
-1. Encode brain MRI → latent space via VQ-VAE.
-2. Train a DDPM on **normal** brain MRI latent representations only.
-3. At inference: add noise to a patient image up to timestep `t*`, denoise
-   back — the model is forced toward a "normal" reconstruction.
-4. Residual map = `|original − reconstructed|` → threshold (KL divergence) →
-   lesion mask.
+Reproduce first, then change one thing at a time.
 
-### Innovation
+1. **Now (conference abstract):** reproduce AnoDDPM (pixel-space DDPM,
+   official code) with Gaussian vs Simplex noise on ADNI CN T1 slices through
+   the **hippocampus**, evaluated CN vs AD (AUROC). T1 only. Start with all
+   hippocampus slices, then trim slices from the range edges as an ablation.
+   Region-wise noise / mask-based inpainting (AnoDDPM's own suggested fix) is
+   future work.
+2. **Later:** Pinaya 2022's latent diffusion model (VQ-VAE + DDPM, KL anomaly
+   mask + partial healing) in this repo (`ddpm-ood`), again Gaussian vs
+   Simplex.
 
-- **Baseline** (`ddpm-ood`): Gaussian noise.
-- **Proposed**: Simplex noise (spatially coherent, structured, fractal
-  patterns), per AnoDDPM.
-- **Hypothesis**: Simplex noise better matches brain MRI's spatial structure
-  → better anomaly maps.
+The AnoDDPM reproduction lives outside this repo: a clone of
+`Julian-Wyatt/AnoDDPM` at `~/LimLab/AnoDDPM`, branch `sand-adni` (ADNI
+hippocampus data loader, `test_args/args101.json` = Gaussian /
+`args102.json` = Simplex, `sand_eval_ad.py` CN-vs-AD evaluation,
+`sand_analyze.py` subgroup AUROCs). Run it in its own conda env
+(torch 1.13.1, numba, ffmpeg) with `PYTHONNOUSERSITE=1`.
 
 ### Key finding
 
@@ -62,16 +67,18 @@ Referenced in this project's research, and committed to this repo under
 
 - `train_vqvae.py`, `train_ddpm.py` — training entry points.
 - `reconstruct.py`, `ood_detection.py` — inference / anomaly scoring.
-- `preprocess_mri.py` — turns raw ADNI DICOM (e.g. `CN_MRI_raw_486subjects/`)
-  into the 2D axial NIfTI slices + `train/val/test_normal.csv` manifests that
-  `src/data/get_train_and_val_dataloader.py` expects. Pipeline: DICOM→NIfTI →
-  N4 bias correction → skull-strip (SynthStrip) → optional affine
-  registration to an MNI template (`--mni_template`, needs antspyx) →
-  isotropic resample → percentile intensity clipping → per-slice NIfTI
-  export. Only produces the *normal* splits — anomalous test data needs a
-  separate lesion dataset (BRATS/WMH/etc.), not covered by this script.
-  `--skull_strip_method otsu` exists only as a smoke-test fallback; never
-  use it to generate training data.
+- `preprocess_mri.py` — raw ADNI DICOM (`CN_MRI_raw_486subjects/`, or AD
+  data with `--split all_test`) → DICOM→NIfTI → skull-strip (SynthStrip, on
+  the raw image) → bias correction (FSL FAST `-B`, default; `--bias_correction
+  n4` for the old order) → affine registration to MNI152 1mm
+  (`--mni_template`, antspyx) → FreeSurfer SynthSeg on the registered brain
+  (`--synthseg`; hippocampus labels 17/53 → per-subject axial z range) →
+  0.5/99.5 percentile clip inside the brain, scaled to [0, 1]. Writes
+  `volumes/<tag>.npy` (z, y, x) + `subjects.csv` (split, hippocampus range,
+  clip values). `--export_slices` additionally writes the 2D slice NIfTIs +
+  CSV manifests for `ddpm-ood`. Parallel with `--workers`; SynthStrip queues
+  one job per GPU; finished subjects (`volumes/<tag>.json`) are skipped on
+  rerun. `--skull_strip_method otsu` is a smoke-test fallback only.
 - `third_party/mri_synthstrip.py` — FreeSurfer's official SynthStrip script,
   vendored verbatim (source commit in its header). Weights are fetched from
   MGH into `~/.cache/synthstrip/` and SHA256-checked against the official
@@ -98,12 +105,17 @@ Referenced in this project's research, and committed to this repo under
   for git. Re-point them per machine.
 - No CI/tests yet; verify changes by running the relevant `configs/*.sh`
   script end-to-end on a small subset first.
-- Skull-stripping tool choice: none of the three reference papers used the
-  same tool (Pinaya: UK Biobank's pre-processed data; AnoDDPM: deliberately
-  used NFBS *full-skull* images with no skull-stripping or registration, and
-  BrainSuite bias correction only on its tumour test set; normative
-  modelling: FreeSurfer 6.0).
-  SynthStrip was chosen because it is peer-reviewed, accurate, the official
-  FreeSurfer tool, and its weights were obtainable (a possible, optional
-  extension to dementia would also stay on the FreeSurfer path). HD-BET was tried first but dropped (its
-  Zenodo-hosted weights were unreachable, and it isn't on the FreeSurfer path).
+- Preprocessing tool choices: none of the three reference papers used the
+  same pipeline (Pinaya: UK Biobank's pre-processed data; AnoDDPM: NFBS
+  *full-skull* images with no skull-stripping or registration, BrainSuite bias
+  correction only on its tumour test set; Parker 2025: FreeSurfer 6.0).
+  The professor chose SynthStrip + FSL FAST + SynthSeg + MNI152 affine.
+  HD-BET was tried first but dropped (its Zenodo-hosted weights were
+  unreachable).
+- AnoDDPM's own intensity normalisation (clip to mean−1·std … mean+2·std of
+  the whole volume) destroys skull-stripped images (it clips 20–70% of brain
+  voxels), so the SAND percentile clip is used instead.
+- Scanner confound: ~19% of CN scans (all 2005–2016) are 1.5T, but every AD
+  scan is 3T. Report CN-vs-AD results both overall and 3T-only.
+- External tools on the original machine: FSL FAST in conda env `fsl-fast`,
+  FreeSurfer 7.4.1 at `/scratch/users/tjdnjs/tools/freesurfer` (SynthSeg).
