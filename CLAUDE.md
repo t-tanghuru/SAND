@@ -15,11 +15,14 @@ AD.
 Reproduce first, then change one thing at a time.
 
 1. **Now (conference abstract):** reproduce AnoDDPM (pixel-space DDPM,
-   official code) with Gaussian vs Simplex noise on ADNI CN T1 slices through
-   the **hippocampus**, evaluated CN vs AD (AUROC). T1 only. Start with all
-   hippocampus slices, then trim slices from the range edges as an ablation.
-   Region-wise noise / mask-based inpainting (AnoDDPM's own suggested fix) is
-   future work.
+   official code) on ADNI CN **3T** T1 slices through the **hippocampus**,
+   evaluated CN vs AD (subject-level hippocampus-score AUROC, plus age/sex
+   matched). A first CN486 run (1.5T+3T, 100k iterations) had Gaussian
+   ahead of Simplex; the current run is Simplex only, 500k iterations, on the
+   split from `make_splits.py` (CN train 500 / val 100 / test 152 / reserve
+   350, AD val 48 / test 280). λ is chosen on validation only; the test set
+   is evaluated once per pre-specified model. Later: trim hippocampus slice
+   range edges, use the reserve CN subjects, region-wise noise / inpainting.
 2. **Later:** Pinaya 2022's latent diffusion model (VQ-VAE + DDPM, KL anomaly
    mask + partial healing) in this repo (`ddpm-ood`), again Gaussian vs
    Simplex.
@@ -27,8 +30,10 @@ Reproduce first, then change one thing at a time.
 The AnoDDPM reproduction lives outside this repo: a clone of
 `Julian-Wyatt/AnoDDPM` at `~/LimLab/AnoDDPM`, branch `sand-adni` (ADNI
 hippocampus data loader, `test_args/args101.json` = Gaussian /
-`args102.json` = Simplex, `sand_eval_ad.py` CN-vs-AD evaluation,
-`sand_analyze.py` subgroup AUROCs). Run it in its own conda env
+`args102.json` = Simplex (CN486 runs), `args201.json` = Simplex 3T 500k,
+`sand_eval_ad.py` CN-vs-AD evaluation, `sand_analyze.py` AUROC with bootstrap
+CIs and age/sex matching, `sand_plot_curves.py` λ and checkpoint curves,
+`sand_ckpt_val_watcher.sh` the automated validation/test pipeline). Run it in its own conda env
 (torch 1.13.1, numba, ffmpeg) with `PYTHONNOUSERSITE=1`.
 
 ### Key finding
@@ -79,6 +84,10 @@ Referenced in this project's research, and committed to this repo under
   CSV manifests for `ddpm-ood`. Parallel with `--workers`; SynthStrip queues
   one job per GPU; finished subjects (`volumes/<tag>.json`) are skipped on
   rerun. `--skull_strip_method otsu` is a smoke-test fallback only.
+- `make_splits.py` — builds the subject-level CN (data/v2 + data/v2_CN_new919)
+  / AD (data/v2_AD) split CSV with per-row data roots and covariates; keeps
+  the original CN test subjects in test and stratifies the rest by age × sex
+  × scan era.
 - `third_party/mri_synthstrip.py` — FreeSurfer's official SynthStrip script,
   vendored verbatim (source commit in its header). Weights are fetched from
   MGH into `~/.cache/synthstrip/` and SHA256-checked against the official
@@ -115,7 +124,10 @@ Referenced in this project's research, and committed to this repo under
 - AnoDDPM's own intensity normalisation (clip to mean−1·std … mean+2·std of
   the whole volume) destroys skull-stripped images (it clips 20–70% of brain
   voxels), so the SAND percentile clip is used instead.
-- Scanner confound: ~19% of CN scans (all 2005–2016) are 1.5T, but every AD
-  scan is 3T. Report CN-vs-AD results both overall and 3T-only.
+- Scanner confound: all AD scans are 3T, so the 91 CN 1.5T scans were
+  removed from the server (backed up on Drive, SHA256-verified) and CN is
+  3T only. AD is still older (≈74.5 vs 70.5 y) and scanned earlier (median
+  2013 vs 2018) than CN, hence the age/sex matched AUROC.
+- Server times/logs are UTC; the user works in KST (UTC+9).
 - External tools on the original machine: FSL FAST in conda env `fsl-fast`,
   FreeSurfer 7.4.1 at `/scratch/users/tjdnjs/tools/freesurfer` (SynthSeg).
