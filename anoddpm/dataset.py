@@ -837,9 +837,15 @@ class ADNIHippocampusDataset(Dataset):
     SynthSeg -> 0.5/99.5 percentile clip, [0, 1]). Replaces NFBS loading; the augmentation/crop/resize/normalise
     transform is the same as MRIDataset. One random axial slice from the hippocampus z range per sample."""
 
-    def __init__(self, root, split, img_size=(256, 256), z_range=None, hippo_range="common", trim=0, transform=None):
+    def __init__(self, root, split, img_size=(256, 256), z_range=None, hippo_range="common", trim=0, transform=None,
+                 split_csv=None):
         import pandas as pd
-        subjects = pd.read_csv(os.path.join(root, "subjects.csv"))
+        if split_csv:
+            # SAND make_splits.py output: CN rows from several preprocessing dirs, each row carries its own root
+            subjects = pd.read_csv(split_csv)
+            subjects = subjects[subjects["group"] == "CN"]
+        else:
+            subjects = pd.read_csv(os.path.join(root, "subjects.csv"))
         self.train_subjects = subjects[subjects["split"] == "train"]
         self.subjects = subjects[subjects["split"] == split].reset_index(drop=True)
         self.root = root
@@ -870,7 +876,8 @@ class ADNIHippocampusDataset(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
         row = self.subjects.iloc[idx]
-        volume = np.load(os.path.join(self.root, "volumes", f"{row['tag']}.npy"), mmap_mode="r")  # z, y, x
+        root = row["root"] if "root" in row else self.root
+        volume = np.load(os.path.join(root, "volumes", f"{row['tag']}.npy"), mmap_mode="r")  # z, y, x
         lo, hi = self.slice_bounds(row)
         slice_idx = randint(lo, hi)
         image = np.ascontiguousarray(volume[slice_idx][::-1]).astype(np.float32)  # 218 x 182, anterior up
@@ -883,6 +890,6 @@ class ADNIHippocampusDataset(Dataset):
 
 def init_adni_datasets(args):
     kwargs = dict(img_size=args['img_size'], hippo_range=args.get("hippo_range", "common") or "common",
-                  trim=int(args.get("hippo_trim", 0) or 0))
-    return ADNIHippocampusDataset(args["adni_root"], "train", **kwargs), \
-        ADNIHippocampusDataset(args["adni_root"], "val", **kwargs)
+                  trim=int(args.get("hippo_trim", 0) or 0), split_csv=args.get("split_csv") or None)
+    return ADNIHippocampusDataset(args.get("adni_root") or None, "train", **kwargs), \
+        ADNIHippocampusDataset(args.get("adni_root") or None, "val", **kwargs)

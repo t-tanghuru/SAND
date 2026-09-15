@@ -41,9 +41,19 @@ def parse_args():
     p.add_argument("--max_subjects", type=int, default=None, help="per group, for quick tests")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out_dir", default="./sand_eval")
+    p.add_argument("--split_csv", default=None, help="SAND make_splits.py CSV (CN+AD, per-row root); overrides the old roots")
+    p.add_argument("--shard", default="0/1", help="i/n: evaluate every n-th subject starting at i (parallel GPUs)")
     p.add_argument("--ckpt", default="params-final.pt",
                    help="file in model/diff-params-ARGS=N/, e.g. params-epoch1000.pt for the 100k-iteration model")
     return p.parse_args()
+
+
+def subject_table_from_csv(split_csv, split):
+    d = pd.read_csv(split_csv)
+    train = d[(d.group == "CN") & (d.split == "train")]
+    z_range = (int(np.median(train.hippo_zmin)), int(np.median(train.hippo_zmax)))
+    d = d[d.split == split].assign(label=lambda x: (x.group == "AD").astype(int))
+    return d.sort_values(["group", "tag"]).reset_index(drop=True), z_range
 
 
 def subject_table(split, seed=0):
@@ -113,12 +123,16 @@ def main():
         diff.noise_fn = lambda x, t: generate_simplex_noise(diff.simplex, x[:1], t[:1], False, in_channels=1).repeat(
                 x.shape[0], 1, 1, 1)
 
-    subjects, z_range = subject_table(a.split)
+    subjects, z_range = subject_table_from_csv(a.split_csv, a.split) if a.split_csv else subject_table(a.split)
+    shard_i, shard_n = map(int, a.shard.split("/"))
     if a.max_subjects:
         subjects = pd.concat([g.head(a.max_subjects) for _, g in subjects.groupby("group")]).reset_index(drop=True)
+    subjects = subjects.iloc[shard_i::shard_n].reset_index(drop=True)
     zs = np.linspace(z_range[0], z_range[1], a.n_slices + 2)[1:-1].round().astype(int)  # equally spaced, inside the range
     os.makedirs(a.out_dir, exist_ok=True)
-    tag = f"args{a.arg_num}_{a.split}" + ("" if a.ckpt == "params-final.pt" else f"_{a.ckpt.replace('.pt', '')}")
+    tag = f"args{a.arg_num}_{a.split}" + ("" if a.ckpt == "params-final.pt" else f"_{a.ckpt.replace('.pt', '').replace('/', '_')}")
+    if shard_n > 1:
+        tag += f"_shard{shard_i}of{shard_n}"
     print(f"{tag}: {args['noise_fn']} | CN {int((subjects.group == 'CN').sum())} AD {int((subjects.group == 'AD').sum())} "
           f"| slices z={zs.tolist()} | lambdas {a.lambdas}", flush=True)
 
@@ -149,14 +163,17 @@ def main():
     df.to_csv(os.path.join(a.out_dir, f"{tag}_slices.csv"), index=False)
     subj = df.groupby(["tag", "group", "label", "lam"], as_index=False)[["brain_mse", "hippo_mse"]].mean()
     subj.to_csv(os.path.join(a.out_dir, f"{tag}_subjects.csv"), index=False)
+    def auc(y, v):
+        return roc_auc_score(y, v) if len(set(y)) == 2 else np.nan  # a shard can miss a group
+
     summary = []
     for lam, g in subj.groupby("lam"):
         s = df[df.lam == lam]
         summary.append(dict(lam=lam,
-                            subject_auroc_brain=roc_auc_score(g.label, g.brain_mse),
-                            subject_auroc_hippo=roc_auc_score(g.label, g.hippo_mse),
-                            slice_auroc_brain=roc_auc_score(s.label, s.brain_mse),
-                            slice_auroc_hippo=roc_auc_score(s.dropna().label, s.dropna().hippo_mse)))
+                            subject_auroc_brain=auc(g.label, g.brain_mse),
+                            subject_auroc_hippo=auc(g.label, g.hippo_mse),
+                            slice_auroc_brain=auc(s.label, s.brain_mse),
+                            slice_auroc_hippo=auc(s.dropna().label, s.dropna().hippo_mse)))
     summary = pd.DataFrame(summary)
     summary.to_csv(os.path.join(a.out_dir, f"{tag}_summary.csv"), index=False)
     print(summary.round(4).to_string(index=False), flush=True)

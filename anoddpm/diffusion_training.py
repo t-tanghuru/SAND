@@ -149,7 +149,8 @@ def train(training_dataset_loader, testing_dataset_loader, args, resume):
             #             f"{((time_taken / 3600) % 1) * 60:02.0f}, est time remaining: {hours}:{mins:02.0f}\r"
             #             )
 
-        if epoch % 1000 == 0 and epoch >= 0:
+        # SAND: checkpoint_every (epochs) lets long runs keep intermediate checkpoints for validation curves
+        if epoch % int(args["checkpoint_every"] or 1000) == 0 and epoch >= 0:
             save(unet=model, args=args, optimiser=optimiser, final=False, ema=ema, epoch=epoch)
 
     save(unet=model, args=args, optimiser=optimiser, final=True, ema=ema)

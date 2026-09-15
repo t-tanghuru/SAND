@@ -1,0 +1,31 @@
+{
+  "img_size": [
+    256,
+    256
+  ],
+  "Batch_Size": 1,
+  "EPOCHS": 5000,
+  "T": 1000,
+  "base_channels": 128,
+  "beta_schedule": "linear",
+  "channel_mults": "",
+  "loss-type": "l2",
+  "loss_weight": "none",
+  "train_start": true,
+  "lr": 0.0001,
+  "random_slice": true,
+  "sample_distance": 800,
+  "weight_decay": 0.0,
+  "save_imgs": false,
+  "save_vids": true,
+  "dropout": 0,
+  "attention_resolutions": "16,8",
+  "num_heads": 2,
+  "num_head_channels": -1,
+  "noise_fn": "simplex",
+  "dataset": "adni_hippo",
+  "split_csv": "/home/tjdnjs/LimLab/SAND/data/splits/split_3T_cn1102_ad328.csv",
+  "hippo_range": "common",
+  "hippo_trim": 0,
+  "checkpoint_every": 500
+}

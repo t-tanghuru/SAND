@@ -1,31 +1,42 @@
-"""SAND: subgroup AUROCs (all / 3T only / age 70-80 / 2011-16 scans) from sand_eval_ad.py subject scores.
+"""SAND: AUROC tables (with bootstrap 95% CIs) from sand_eval_ad.py subject scores.
 
-usage: python sand_analyze.py sand_eval/args101_val_subjects.csv [more *_subjects.csv ...]
+Shards of one run (*_shardIofN_subjects.csv) are merged. Subgroups:
+  all            every evaluated subject
+  age-sex matched  each CN subject paired with the nearest-age AD subject of the same sex, without replacement
+                   (AD outnumbers CN here, so AD is sub-sampled; Parker et al. 2025 matched controls on age and sex)
+  age 70-80      both groups restricted to ages 70-80
+With --meta_csv omitted the old CN486/AD328 metadata (field strength etc.) is used.
+
+usage: python sand_analyze.py --meta_csv SPLIT.csv RUN_subjects.csv [RUN_shard0of3_subjects.csv ...]
 """
-import sys
+import argparse
+import re
+from collections import defaultdict
 
 import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-META = "/scratch/users/tjdnjs/sand_meta_cn_ad.csv"  # CN/AD participants + DICOM field strength/vendor
+OLD_META = "/scratch/users/tjdnjs/sand_meta_cn_ad.csv"
 
 
-def load_meta():
-    m = pd.read_csv(META)
+def load_meta(meta_csv):
+    if meta_csv:
+        m = pd.read_csv(meta_csv)
+        return m[["tag", "age", "sex", "year"]]
+    m = pd.read_csv(OLD_META)
     m["tag"] = m.subject_id + "_" + m.image_id
-    m["tesla"] = np.where((m.field_strength < 2) | (m.field_strength > 1000), "1.5T", "3T")  # 1.494 and a 15000 typo are 1.5T
+    m["tesla"] = np.where((m.field_strength < 2) | (m.field_strength > 1000), "1.5T", "3T")
     m["year"] = m.study_date.str[:4].astype(int)
-    return m[["tag", "age", "sex", "year", "tesla", "vendor"]]
+    return m[["tag", "age", "sex", "year", "tesla"]]
 
 
 def auroc_ci(y, s, n_boot=2000, seed=0):
-    rng = np.random.RandomState(seed)
     y, s = np.asarray(y), np.asarray(s)
     if len(np.unique(y)) < 2:
         return np.nan, np.nan, np.nan
-    point = roc_auc_score(y, s)
-    boots = []
+    rng = np.random.RandomState(seed)
+    point, boots = roc_auc_score(y, s), []
     for _ in range(n_boot):
         i = rng.randint(0, len(y), len(y))
         if len(np.unique(y[i])) == 2:
@@ -34,26 +45,45 @@ def auroc_ci(y, s, n_boot=2000, seed=0):
     return point, lo, hi
 
 
+def age_sex_match(d, seed=0):
+    """Greedy 1:1 nearest-age matching within sex, smaller group as anchor, without replacement."""
+    d = d[d.age.notna()]  # one CN subject has no recorded age
+    cn, ad = d[d.label == 0], d[d.label == 1]
+    anchor, pool = (cn, ad) if len(cn) <= len(ad) else (ad, cn)
+    anchor = anchor.sample(frac=1, random_state=seed)
+    used, keep = set(), []
+    for _, r in anchor.iterrows():
+        cand = pool[(pool.sex == r.sex) & ~pool.tag.isin(used)]
+        if cand.empty:
+            continue
+        j = (cand.age - r.age).abs().idxmin()
+        used.add(pool.loc[j, "tag"])
+        keep += [r.tag, pool.loc[j, "tag"]]
+    return d[d.tag.isin(keep)]
+
+
 SUBGROUPS = {
     "all": lambda d: d,
-    "3T only": lambda d: d[d.tesla == "3T"],
+    "age-sex matched": age_sex_match,
     "age 70-80": lambda d: d[(d.age >= 70) & (d.age < 80)],
-    "scans 2011-16": lambda d: d[(d.year >= 2011) & (d.year <= 2016)],
 }
 
 
-def main(paths):
-    meta = load_meta()
-    out = []
+def main(paths, meta_csv=None):
+    meta = load_meta(meta_csv)
+    runs = defaultdict(list)
     for p in paths:
-        d = pd.read_csv(p).merge(meta, on="tag", how="left")
-        assert d.tesla.notna().all(), f"missing metadata for some subjects in {p}"
-        name = p.split("/")[-1].replace("_subjects.csv", "")
+        runs[re.sub(r"_shard\d+of\d+", "", p.split("/")[-1].replace("_subjects.csv", ""))].append(pd.read_csv(p))
+    out = []
+    for name, parts in runs.items():
+        d = pd.concat(parts).drop_duplicates(["tag", "lam"]).merge(meta, on="tag", how="left")
+        assert d.age.notna().all(), f"missing metadata in {name}"
         for lam, g in d.groupby("lam"):
             for sg, f in SUBGROUPS.items():
                 h = f(g)
-                row = dict(run=name, lam=lam, subgroup=sg, n_CN=int((h.label == 0).sum()), n_AD=int((h.label == 1).sum()))
-                for score in ["brain_mse", "hippo_mse"]:
+                row = dict(run=name, lam=lam, subgroup=sg, n_CN=int((h.label == 0).sum()), n_AD=int((h.label == 1).sum()),
+                           age_CN=round(h[h.label == 0].age.mean(), 1), age_AD=round(h[h.label == 1].age.mean(), 1))
+                for score in ["hippo_mse", "brain_mse"]:
                     a, lo, hi = auroc_ci(h.label, h[score])
                     row[score] = f"{a:.3f} [{lo:.3f}-{hi:.3f}]"
                 out.append(row)
@@ -63,4 +93,8 @@ def main(paths):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--meta_csv", default=None)
+    ap.add_argument("paths", nargs="+")
+    a = ap.parse_args()
+    main(a.paths, a.meta_csv)
