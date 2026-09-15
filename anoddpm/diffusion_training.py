@@ -352,6 +352,11 @@ def main():
                     )
         training_dataset_loader = dataset.init_dataset_loader(training_dataset, args)
         testing_dataset_loader = dataset.init_dataset_loader(testing_dataset, args)
+    elif args["dataset"].lower() == "adni_hippo":
+        # SAND: ADNI CN hippocampus slices (see dataset.ADNIHippocampusDataset)
+        training_dataset, testing_dataset = dataset.init_adni_datasets(args)
+        training_dataset_loader = dataset.init_dataset_loader(training_dataset, args)
+        testing_dataset_loader = dataset.init_dataset_loader(testing_dataset, args)
     else:
         # load NFBS dataset
         training_dataset, testing_dataset = dataset.init_datasets(ROOT_DIR, args)

@@ -830,3 +830,59 @@ if __name__ == "__main__":
         plt.imshow(helpers.gridify_output(new["mask"], 4), cmap="gray")
         plt.show()
         plt.pause(1)
+
+
+class ADNIHippocampusDataset(Dataset):
+    """SAND: ADNI T1 volumes preprocessed by SAND's preprocess_mri.py (SynthStrip -> FSL FAST -> MNI152 affine ->
+    SynthSeg -> 0.5/99.5 percentile clip, [0, 1]). Replaces NFBS loading; the augmentation/crop/resize/normalise
+    transform is the same as MRIDataset. One random axial slice from the hippocampus z range per sample."""
+
+    def __init__(self, root, split, img_size=(256, 256), z_range=None, hippo_range="common", trim=0, transform=None):
+        import pandas as pd
+        subjects = pd.read_csv(os.path.join(root, "subjects.csv"))
+        self.train_subjects = subjects[subjects["split"] == "train"]
+        self.subjects = subjects[subjects["split"] == split].reset_index(drop=True)
+        self.root = root
+        self.hippo_range = hippo_range
+        self.trim = trim
+        # common: one MNI z band for everyone (median hippocampus start/end of the CN training subjects), so slice
+        # selection does not depend on each subject's own (possibly atrophied) hippocampus
+        self.z_range = z_range if z_range is not None else (
+            int(np.median(self.train_subjects["hippo_zmin"])), int(np.median(self.train_subjects["hippo_zmax"])))
+        self.transform = transforms.Compose(
+                [transforms.ToPILImage(),
+                 transforms.RandomAffine(3, translate=(0.02, 0.09)),
+                 transforms.CenterCrop(235),
+                 transforms.Resize(img_size, transforms.InterpolationMode.BILINEAR),
+                 transforms.ToTensor(),
+                 transforms.Normalize((0.5), (0.5))
+                 ]
+                ) if not transform else transform
+
+    def slice_bounds(self, row):
+        lo, hi = self.z_range if self.hippo_range == "common" else (int(row["hippo_zmin"]), int(row["hippo_zmax"]))
+        return lo + self.trim, hi - self.trim
+
+    def __len__(self):
+        return len(self.subjects)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        row = self.subjects.iloc[idx]
+        volume = np.load(os.path.join(self.root, "volumes", f"{row['tag']}.npy"), mmap_mode="r")  # z, y, x
+        lo, hi = self.slice_bounds(row)
+        slice_idx = randint(lo, hi)
+        image = np.ascontiguousarray(volume[slice_idx][::-1]).astype(np.float32)  # 218 x 182, anterior up
+        padded = np.zeros((256, 256), dtype=np.float32)  # centre on a 256 canvas like NFBS 256-wide slices
+        y0, x0 = (256 - image.shape[0]) // 2, (256 - image.shape[1]) // 2
+        padded[y0:y0 + image.shape[0], x0:x0 + image.shape[1]] = image
+        image = self.transform(padded)
+        return {'image': image, "filenames": f"{row['tag']}_z{slice_idx}"}
+
+
+def init_adni_datasets(args):
+    kwargs = dict(img_size=args['img_size'], hippo_range=args.get("hippo_range", "common") or "common",
+                  trim=int(args.get("hippo_trim", 0) or 0))
+    return ADNIHippocampusDataset(args["adni_root"], "train", **kwargs), \
+        ADNIHippocampusDataset(args["adni_root"], "val", **kwargs)
