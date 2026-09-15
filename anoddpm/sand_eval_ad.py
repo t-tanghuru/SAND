@@ -41,6 +41,8 @@ def parse_args():
     p.add_argument("--max_subjects", type=int, default=None, help="per group, for quick tests")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out_dir", default="./sand_eval")
+    p.add_argument("--ckpt", default="params-final.pt",
+                   help="file in model/diff-params-ARGS=N/, e.g. params-epoch1000.pt for the 100k-iteration model")
     return p.parse_args()
 
 
@@ -95,7 +97,7 @@ def main():
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
 
-    ckpt = torch.load(f"./model/diff-params-ARGS={a.arg_num}/params-final.pt", map_location="cpu")
+    ckpt = torch.load(f"./model/diff-params-ARGS={a.arg_num}/{a.ckpt}", map_location="cpu")
     model = UNetModel(args['img_size'][0], args['base_channels'], channel_mults=args['channel_mults'],
                       dropout=args["dropout"], n_heads=args["num_heads"], n_head_channels=args["num_head_channels"],
                       in_channels=1)
@@ -116,7 +118,7 @@ def main():
         subjects = pd.concat([g.head(a.max_subjects) for _, g in subjects.groupby("group")]).reset_index(drop=True)
     zs = np.linspace(z_range[0], z_range[1], a.n_slices + 2)[1:-1].round().astype(int)  # equally spaced, inside the range
     os.makedirs(a.out_dir, exist_ok=True)
-    tag = f"args{a.arg_num}_{a.split}"
+    tag = f"args{a.arg_num}_{a.split}" + ("" if a.ckpt == "params-final.pt" else f"_{a.ckpt.replace('.pt', '')}")
     print(f"{tag}: {args['noise_fn']} | CN {int((subjects.group == 'CN').sum())} AD {int((subjects.group == 'AD').sum())} "
           f"| slices z={zs.tolist()} | lambdas {a.lambdas}", flush=True)
 

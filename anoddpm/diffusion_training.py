@@ -52,7 +52,11 @@ def train(training_dataset_loader, testing_dataset_loader, args, resume):
 
     if resume:
 
-        if "unet" in resume:
+        # SAND: save() stores the trained weights as "model_state_dict" (never "unet"), so the original check always
+        # fell back to the EMA weights; load the actual weights so a resumed run continues the same optimisation
+        if "model_state_dict" in resume:
+            model.load_state_dict(resume["model_state_dict"])
+        elif "unet" in resume:
             model.load_state_dict(resume["unet"])
         else:
             model.load_state_dict(resume["ema"])

@@ -5,6 +5,9 @@ from sklearn.metrics import auc, roc_curve
 
 from helpers import gridify_output
 
+# SAND: testing() used `device` without defining it (NameError at the end of training)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def main():
     pass
